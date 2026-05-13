@@ -18,53 +18,43 @@
 // first portaudio hostapi has highest priority, last hostapi has lowest
 // if none are available, the default one is selected.
 // they are also the ones which are known to work
-const std::vector<PaHostApiTypeId> PlayerInterface::hostApiPriority = {
-    // Unix
-    paJACK,
-    paALSA,
-    // Windows
-    paMME, // only option for cygwin
-};
+// const std::vector<PaHostApiTypeId> PlayerInterface::hostApiPriority = {
+    // // Unix
+    // paJACK,
+    // paALSA,
+    // // Windows
+    // paMME, // only option for cygwin
+// };
 
 /*
  * public PlayerInterface
  */
 
-PlayerInterface::PlayerInterface(
-        TrackviewGUI &trackUI, size_t initSongPos, int midiPortNumber)
-    : trackUI(trackUI),
-    mutedTracks(ConfigManager::Instance().GetCfg().GetTrackLimit())
+PlayerInterface::PlayerInterface(size_t initSongPos)
+    :     mutedTracks(ConfigManager::Instance().GetCfg().GetTrackLimit())
 {
-    rtmidiOpen(midiPortNumber);
     initContext();
-    ctx->InitSong(initSongPos, midiin != nullptr);
+    ctx->InitSong(initSongPos, true);
     setupLoudnessCalcs();
-    portaudioOpen();
-    if (midiin != nullptr) {
-        Play();
-    }
+    Play();
 }
 
 PlayerInterface::~PlayerInterface() 
 {
     // stop and deallocate player thread if required
     Stop();
-    rtmidiClose();
-    portaudioClose();
 }
 
 void PlayerInterface::LoadSong(size_t songPos)
 {
     bool play = playerState == State::PLAYING;
     Stop();
-    ctx->InitSong(songPos, midiin != nullptr);
+    ctx->InitSong(songPos, true);
     setupLoudnessCalcs();
     // TODO replace this with pairs
     float vols[ctx->seq.tracks.size() * 2];
     for (size_t i = 0; i < ctx->seq.tracks.size() * 2; i++)
         vols[i] = 0.0f;
-
-    trackUI.SetState(ctx->seq, vols, 0, 0);
 
     if (play)
         Play();
@@ -180,18 +170,6 @@ bool PlayerInterface::IsPlaying()
 
 void PlayerInterface::UpdateView()
 {
-    if (playerState != State::THREAD_DELETED &&
-            playerState != State::SHUTDOWN &&
-            playerState != State::TERMINATED) {
-        size_t trks = ctx->seq.tracks.size();
-        assert(trks == trackLoudness.size());
-        float vols[trks * 2];
-        for (size_t i = 0; i < trks; i++)
-            trackLoudness[i].GetLoudness(vols[i*2], vols[i*2+1]);
-
-        /* count number of active PCM channels */
-        trackUI.SetState(ctx->seq, vols, static_cast<int>(ctx->sndChannels.size()), -1);
-    }
 }
 
 void PlayerInterface::ToggleMute(size_t index)
@@ -232,8 +210,7 @@ void PlayerInterface::initContext()
     ctx = std::make_unique<PlayerContext>(
             ConfigManager::Instance().GetMaxLoopsPlaylist(),
             cfg.GetTrackLimit(),
-            EnginePars(cfg.GetPCMVol(), cfg.GetEngineRev(), cfg.GetEngineFreq()),
-            midiin
+            EnginePars(cfg.GetPCMVol(), cfg.GetEngineRev(), cfg.GetEngineFreq())
             );
 }
 
@@ -247,12 +224,7 @@ void PlayerInterface::threadWorker()
         while (playerState != State::SHUTDOWN) {
             switch (playerState) {
             case State::RESTART:
-                if (midiin != nullptr) {
-                    ctx->KillAllChannels();
-                } else {
-                    ctx->InitSong(
-                            ctx->seq.GetSongHeaderPos(), midiin != nullptr);
-                }
+                ctx->KillAllChannels();
                 playerState = State::PLAYING;
                 [[fallthrough]];
             case State::PLAYING:
@@ -293,7 +265,7 @@ void PlayerInterface::threadWorker()
         }
         // reset song state after it has finished
     } catch (std::exception& e) {
-        ctx->InitSong(ctx->seq.GetSongHeaderPos(), midiin != nullptr);
+        ctx->InitSong(ctx->seq.GetSongHeaderPos(), true);
         Debug::print("FATAL ERROR on streaming thread: %s", e.what());
     }
     masterLoudness.Reset();
@@ -304,16 +276,16 @@ void PlayerInterface::threadWorker()
     playerState = State::TERMINATED;
 }
 
-int PlayerInterface::audioCallback(const void *inputBuffer, void *outputBuffer, size_t framesPerBuffer,
-        const PaStreamCallbackTimeInfo *timeInfo, PaStreamCallbackFlags statusFlags, void *userData)
-{
-    (void)inputBuffer;
-    (void)timeInfo;
-    (void)statusFlags;
-    Ringbuffer *rBuf = (Ringbuffer *)userData;
-    rBuf->Take((sample *)outputBuffer, framesPerBuffer);
-    return 0;
-}
+// int PlayerInterface::audioCallback(const void *inputBuffer, void *outputBuffer, size_t framesPerBuffer,
+    //     const PaStreamCallbackTimeInfo *timeInfo, PaStreamCallbackFlags statusFlags, void *userData)
+// {
+    // (void)inputBuffer;
+    // (void)timeInfo;
+    // (void)statusFlags;
+    // Ringbuffer *rBuf = (Ringbuffer *)userData;
+    // rBuf->Take((sample *)outputBuffer, framesPerBuffer);
+    // return 0;
+// }
 
 void PlayerInterface::setupLoudnessCalcs()
 {
@@ -321,108 +293,97 @@ void PlayerInterface::setupLoudnessCalcs()
     for (size_t i = 0; i < ctx->seq.tracks.size(); i++)
         trackLoudness.emplace_back(5.0f);
 }
-
-void PlayerInterface::portaudioOpen()
-{
-    // init host api
-    PaDeviceIndex deviceIndex = -1;
-    PaHostApiIndex hostApiIndex = -1;
-    for (const auto apiType : hostApiPriority) {
-        hostApiIndex = Pa_HostApiTypeIdToHostApiIndex(apiType);
-        // prioritized host api available ?
-        if (hostApiIndex < 0)
-            continue;
-
-        const PaHostApiInfo *apiinfo = Pa_GetHostApiInfo(hostApiIndex);
-        if (apiinfo == NULL)
-            throw Xcept("Pa_GetHostApiInfo with valid index failed");
-        deviceIndex = apiinfo->defaultOutputDevice;
-        break;
-    }
-    if (hostApiIndex < 0) {
-        // no prioritized api was found, use default
-        const PaHostApiInfo *apiinfo = Pa_GetHostApiInfo(Pa_GetDefaultHostApi());
-        Debug::print("No supported API found, falling back to: %s", apiinfo->name);
-        if (apiinfo == NULL)
-            throw Xcept("Pa_GetHostApiInfo with valid index failed");
-        deviceIndex = apiinfo->defaultOutputDevice;
-    }
-
-    const PaDeviceInfo *devinfo = Pa_GetDeviceInfo(deviceIndex);
-    if (devinfo == NULL)
-        throw Xcept("Pa_GetDeviceInfo with valid index failed");
-
-    PaStreamParameters outputStreamParameters;
-    outputStreamParameters.device = deviceIndex;
-    outputStreamParameters.channelCount = 2;    // stereo
-    outputStreamParameters.sampleFormat = paFloat32;
-    outputStreamParameters.suggestedLatency = devinfo->defaultLowOutputLatency;
-    outputStreamParameters.hostApiSpecificStreamInfo = NULL;
-
-    PaError err;
-    uint32_t outSampleRate = ctx->mixer.GetSampleRate();
-    if ((err = Pa_OpenStream(&audioStream, NULL, &outputStreamParameters, outSampleRate, 0, paNoFlag, audioCallback, (void *)&rBuf)) != paNoError) {
-        Debug::print("Pa_OpenDefaultStream: %s", Pa_GetErrorText(err));
-        return;
-    }
-    if ((err = Pa_StartStream(audioStream)) != paNoError) {
-        Debug::print("PA_StartStream: %s", Pa_GetErrorText(err));
-        return;
-    }
-}
-
-void PlayerInterface::portaudioClose()
-{
-    PaError err;
-    if ((err = Pa_StopStream(audioStream)) != paNoError) {
-        Debug::print("Pa_StopStream: %s", Pa_GetErrorText(err));
-    }
-    if ((err = Pa_CloseStream(audioStream)) != paNoError) {
-        Debug::print("Pa_CloseStream: %s", Pa_GetErrorText(err));
-    }
-}
-
-// void midicallback(
-//         double deltatime, std::vector<unsigned char> *message, void
-//         *userData)
+// 
+// void PlayerInterface::portaudioOpen()
 // {
-//     unsigned int nBytes = message->size();
-//     for (unsigned int i = 0; i < nBytes; i++)
-//         std::cout << "Byte " << i << " = " << (int)message->at(i) << ", ";
-//     if (nBytes > 0)
-//         std::cout << "stamp = " << deltatime << std::endl;
+    // // init host api
+    // PaDeviceIndex deviceIndex = -1;
+    // PaHostApiIndex hostApiIndex = -1;
+    // for (const auto apiType : hostApiPriority) {
+    //     hostApiIndex = Pa_HostApiTypeIdToHostApiIndex(apiType);
+    //     // prioritized host api available ?
+    //     if (hostApiIndex < 0)
+    //         continue;
+// 
+    //     const PaHostApiInfo *apiinfo = Pa_GetHostApiInfo(hostApiIndex);
+    //     if (apiinfo == NULL)
+    //         throw Xcept("Pa_GetHostApiInfo with valid index failed");
+    //     deviceIndex = apiinfo->defaultOutputDevice;
+    //     break;
+    // }
+    // if (hostApiIndex < 0) {
+    //     // no prioritized api was found, use default
+    //     const PaHostApiInfo *apiinfo = Pa_GetHostApiInfo(Pa_GetDefaultHostApi());
+    //     Debug::print("No supported API found, falling back to: %s", apiinfo->name);
+    //     if (apiinfo == NULL)
+    //         throw Xcept("Pa_GetHostApiInfo with valid index failed");
+    //     deviceIndex = apiinfo->defaultOutputDevice;
+    // }
+// 
+    // const PaDeviceInfo *devinfo = Pa_GetDeviceInfo(deviceIndex);
+    // if (devinfo == NULL)
+    //     throw Xcept("Pa_GetDeviceInfo with valid index failed");
+// 
+    // PaStreamParameters outputStreamParameters;
+    // outputStreamParameters.device = deviceIndex;
+    // outputStreamParameters.channelCount = 2;    // stereo
+    // outputStreamParameters.sampleFormat = paFloat32;
+    // outputStreamParameters.suggestedLatency = devinfo->defaultLowOutputLatency;
+    // outputStreamParameters.hostApiSpecificStreamInfo = NULL;
+// 
+    // PaError err;
+    // uint32_t outSampleRate = ctx->mixer.GetSampleRate();
+    // if ((err = Pa_OpenStream(&audioStream, NULL, &outputStreamParameters, outSampleRate, 0, paNoFlag, audioCallback, (void *)&rBuf)) != paNoError) {
+    //     Debug::print("Pa_OpenDefaultStream: %s", Pa_GetErrorText(err));
+    //     return;
+    // }
+    // if ((err = Pa_StartStream(audioStream)) != paNoError) {
+    //     Debug::print("PA_StartStream: %s", Pa_GetErrorText(err));
+    //     return;
+    // }
+// }
+// 
+// void PlayerInterface::portaudioClose()
+// {
+    // PaError err;
+    // if ((err = Pa_StopStream(audioStream)) != paNoError) {
+    //     Debug::print("Pa_StopStream: %s", Pa_GetErrorText(err));
+    // }
+    // if ((err = Pa_CloseStream(audioStream)) != paNoError) {
+    //     Debug::print("Pa_CloseStream: %s", Pa_GetErrorText(err));
+    // }
 // }
 
-void PlayerInterface::rtmidiOpen(int portNumber)
-{
-    if (portNumber < 0) {
-        midiin = nullptr;
-        return;
-    }
-
-    midiin = new RtMidiIn(RtMidi::UNSPECIFIED, "agbsnd", 65536);
-    // Check inputs.
-    unsigned int nPorts = midiin->getPortCount();
-    // std::cout << "\nThere are " << nPorts << " MIDI input sources
-    // available.\n";
-    if (portNumber >= nPorts) {
-        Debug::print(
-                "Cannot open MIDI input: Invalid port number %d", portNumber);
-        delete midiin;
-        midiin = nullptr;
-        return;
-    }
-    try {
-        midiPortName = midiin->getPortName(portNumber);
-        Debug::print("Using MIDI input: %s", midiPortName.c_str());
-        midiin->openPort(portNumber);
-
-    } catch (RtMidiError &error) {
-        Debug::print("Cannot open MIDI input: %s", error.getMessage().c_str());
-        delete midiin;
-        midiin = nullptr;
-        return;
-    }
-}
-
-void PlayerInterface::rtmidiClose() { delete midiin; }
+// void PlayerInterface::rtmidiOpen(int portNumber)
+// {
+    // if (portNumber < 0) {
+    //     midiin = nullptr;
+    //     return;
+    // }
+// 
+    // midiin = new RtMidiIn(RtMidi::UNSPECIFIED, "agbsnd", 65536);
+    // // Check inputs.
+    // unsigned int nPorts = midiin->getPortCount();
+    // // std::cout << "\nThere are " << nPorts << " MIDI input sources
+    // // available.\n";
+    // if (portNumber >= nPorts) {
+    //     Debug::print(
+    //             "Cannot open MIDI input: Invalid port number %d", portNumber);
+    //     delete midiin;
+    //     midiin = nullptr;
+    //     return;
+    // }
+    // try {
+    //     midiPortName = midiin->getPortName(portNumber);
+    //     Debug::print("Using MIDI input: %s", midiPortName.c_str());
+    //     midiin->openPort(portNumber);
+// 
+    // } catch (RtMidiError &error) {
+    //     Debug::print("Cannot open MIDI input: %s", error.getMessage().c_str());
+    //     delete midiin;
+    //     midiin = nullptr;
+    //     return;
+    // }
+// }
+// 
+// void PlayerInterface::rtmidiClose() { delete midiin; }

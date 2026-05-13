@@ -3,112 +3,112 @@
 #include "Debug.h"
 
 PlayerContext::PlayerContext(
-        int8_t maxLoops, uint8_t maxTracks, EnginePars pars, RtMidiIn *midiin)
+        int8_t maxLoops, uint8_t maxTracks, EnginePars pars)
     : reader(*this, maxLoops), mixer(*this, STREAM_SAMPLERATE, 1.0f),
-      seq(maxTracks), pars(pars), midiin(midiin)
+      seq(maxTracks), pars(pars)
 {
 }
 
 void PlayerContext::Process(std::vector<std::vector<sample>>& trackAudio)
 {
-    reader.Process(midiin != nullptr);
+    reader.Process(true);
     mixer.Process(trackAudio);
 }
 
 void PlayerContext::ProcessMidi()
 {
-    if (midiin == nullptr) {
-        return;
-    }
-    std::vector<unsigned char> message;
-    int nBytes;
-
-    while (true) {
-        double stamp = midiin->getMessage(&message);
-        nBytes = message.size();
-        if (nBytes == 0) {
-            break;
-        }
-        uint8_t status = message[0];
-        uint8_t uarg = message[1];
-        uint8_t uarg2 = message[2];
-        int8_t sarg = static_cast<int8_t>(uarg);
-        int8_t sarg2 = static_cast<int8_t>(uarg2);
-
-        if (status < 0x80) {
-            // invalid status
-            continue;
-        }
-        if (status >= 0xF0) {
-            // todo: parse meta / sysex
-            continue;
-        }
-        uint8_t channel = status & 0x0F;
-        switch (status & 0xF0) {
-        case 0x80:    // note off
-            reader.PlayLiveNoteOff(message[1], channel);
-            continue;
-        case 0x90:    // note on
-            if (message[2] == 0) {
-                reader.PlayLiveNoteOff(message[1], channel);
-            } else {
-                // Debug::print(
-                //         "note on %02X %02X %02X", message[0], message[1],
-                //         message[2]);
-
-                reader.PlayLiveNoteOn(message[1], message[2], channel);
-            }
-            continue;
-        case 0xA0:    // polyphonic aftertouch
-            continue;
-        case 0xB0:    // control change
-            switch (message[1]) {
-            case 7:    // volume
-                reader.PlayLiveCommand(0xBE, uarg2, 0, channel);
-                continue;
-            case 10:    // pan
-                reader.PlayLiveCommand(0xBF, 0, sarg2, channel);
-                continue;
-            case 20:    // bend range
-                reader.PlayLiveCommand(0xC1, uarg2, 0, channel);
-                continue;
-            case 21:    // lfo speed
-                reader.PlayLiveCommand(0xC2, uarg2, 0, channel);
-                continue;
-            case 26:    // lfo delay
-                reader.PlayLiveCommand(0xC3, uarg2, 0, channel);
-                continue;
-            case 1:    // mod depth
-                reader.PlayLiveCommand(0xC4, uarg2, 0, channel);
-                continue;
-            case 22:    // mod type
-                reader.PlayLiveCommand(0xC5, uarg2, 0, channel);
-                continue;
-            case 24:    // tune
-                reader.PlayLiveCommand(0xC8, 0, sarg2, channel);
-                continue;
-            case 29:    // emulate tempo (bpm / 2)
-                reader.PlayLiveCommand(0xBB, uarg2, 0, 0);
-                continue;
-            case 33:    // priority
-                reader.PlayLiveCommand(0xBA, uarg2, 0, channel);
-                continue;
-            case 123:    // all notes off
-                KillAllChannels();
-                continue;
-            }
-            continue;
-        case 0xC0:    // program change
-            // Debug::print("IN %d: program change %d", channel, message[1]);
-            reader.PlayLiveCommand(0xBD, uarg, 0, channel);
-            continue;
-        case 0xD0:    // channel aftertouch
-            continue;
-        case 0xE0:    // pitch bend
-            reader.PlayLiveCommand(0xC0, 0, sarg2, channel);
-            continue;
-        }
-    }
+    // if (midiin == nullptr) {
+    //     return;
+    // }
+    // std::vector<unsigned char> message;
+    // int nBytes;
+// 
+    // while (true) {
+    //     double stamp = midiin->getMessage(&message);
+    //     nBytes = message.size();
+    //     if (nBytes == 0) {
+    //         break;
+    //     }
+    //     uint8_t status = message[0];
+    //     uint8_t uarg = message[1];
+    //     uint8_t uarg2 = message[2];
+    //     int8_t sarg = static_cast<int8_t>(uarg);
+    //     int8_t sarg2 = static_cast<int8_t>(uarg2);
+// 
+    //     if (status < 0x80) {
+    //         // invalid status
+    //         continue;
+    //     }
+    //     if (status >= 0xF0) {
+    //         // todo: parse meta / sysex
+    //         continue;
+    //     }
+    //     uint8_t channel = status & 0x0F;
+    //     switch (status & 0xF0) {
+    //     case 0x80:    // note off
+    //         reader.PlayLiveNoteOff(message[1], channel);
+    //         continue;
+    //     case 0x90:    // note on
+    //         if (message[2] == 0) {
+    //             reader.PlayLiveNoteOff(message[1], channel);
+    //         } else {
+    //             // Debug::print(
+    //             //         "note on %02X %02X %02X", message[0], message[1],
+    //             //         message[2]);
+// 
+    //             reader.PlayLiveNoteOn(message[1], message[2], channel);
+    //         }
+    //         continue;
+    //     case 0xA0:    // polyphonic aftertouch
+    //         continue;
+    //     case 0xB0:    // control change
+    //         switch (message[1]) {
+    //         case 7:    // volume
+    //             reader.PlayLiveCommand(0xBE, uarg2, 0, channel);
+    //             continue;
+    //         case 10:    // pan
+    //             reader.PlayLiveCommand(0xBF, 0, sarg2, channel);
+    //             continue;
+    //         case 20:    // bend range
+    //             reader.PlayLiveCommand(0xC1, uarg2, 0, channel);
+    //             continue;
+    //         case 21:    // lfo speed
+    //             reader.PlayLiveCommand(0xC2, uarg2, 0, channel);
+    //             continue;
+    //         case 26:    // lfo delay
+    //             reader.PlayLiveCommand(0xC3, uarg2, 0, channel);
+    //             continue;
+    //         case 1:    // mod depth
+    //             reader.PlayLiveCommand(0xC4, uarg2, 0, channel);
+    //             continue;
+    //         case 22:    // mod type
+    //             reader.PlayLiveCommand(0xC5, uarg2, 0, channel);
+    //             continue;
+    //         case 24:    // tune
+    //             reader.PlayLiveCommand(0xC8, 0, sarg2, channel);
+    //             continue;
+    //         case 29:    // emulate tempo (bpm / 2)
+    //             reader.PlayLiveCommand(0xBB, uarg2, 0, 0);
+    //             continue;
+    //         case 33:    // priority
+    //             reader.PlayLiveCommand(0xBA, uarg2, 0, channel);
+    //             continue;
+    //         case 123:    // all notes off
+    //             KillAllChannels();
+    //             continue;
+    //         }
+    //         continue;
+    //     case 0xC0:    // program change
+    //         // Debug::print("IN %d: program change %d", channel, message[1]);
+    //         reader.PlayLiveCommand(0xBD, uarg, 0, channel);
+    //         continue;
+    //     case 0xD0:    // channel aftertouch
+    //         continue;
+    //     case 0xE0:    // pitch bend
+    //         reader.PlayLiveCommand(0xC0, 0, sarg2, channel);
+    //         continue;
+    //     }
+    // }
 }
 
 void PlayerContext::InitSong(size_t songHeaderPos, bool liveMode)

@@ -4,7 +4,6 @@
 
 #include "SequenceReader.h"
 #include "SoundMixer.h"
-#include <rtmidi/RtMidi.h>
 
 /* Instead of defining lots of global objects, we define
  * a context with all the things we need. So anything which
@@ -15,8 +14,7 @@ struct PlayerContext {
     PlayerContext(const PlayerContext&) = delete;
     PlayerContext& operator=(const PlayerContext&) = delete;
     PlayerContext(
-            int8_t maxLoops, uint8_t maxTracks, EnginePars pars,
-            RtMidiIn *midiin);
+            int8_t maxLoops, uint8_t maxTracks, EnginePars pars);
 
     void Process(std::vector<std::vector<sample>>& trackAudio);
     // TODO pull this out into a separate class
@@ -31,7 +29,6 @@ struct PlayerContext {
     SoundBank bnk;
     EnginePars pars;
     // TODO pull this out into a separate class
-    RtMidiIn *midiin;
 
     // sound channels
     std::list<SoundChannel> sndChannels;

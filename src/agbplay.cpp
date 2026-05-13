@@ -1,17 +1,15 @@
 #include <iostream>
 #include <cstring>
 #include <cstdio>
-#include <curses.h>
-#include <portaudio.h>
 #include <clocale>
-#include <rtmidi/RtMidi.h>
 
 #include "SoundData.h"
 #include "Debug.h"
-#include "WindowGUI.h"
 #include "Xcept.h"
 #include "ConfigManager.h"
 #include "OS.h"
+#include "Rom.h"
+#include "PlayerInterface.h"
 
 static void usage();
 static void help();
@@ -37,15 +35,9 @@ int main(int argc, char *argv[])
         songTablePos = strtoul(argv[2], nullptr, 16);
     }
 
-    int midiPortNumber = -1;
-    if (argc >= 4) {
-        midiPortNumber = atoi(argv[3]) - 1;
-    }
 
     try {
         setlocale(LC_ALL, "");
-        if (Pa_Initialize() != paNoError)
-            throw Xcept("Couldn't init portaudio");
         std::cout << "Loading ROM..." << std::endl;
 
         Rom::CreateInstance(argv[1]);
@@ -55,28 +47,22 @@ int main(int argc, char *argv[])
         std::cout << "Reading Songtable" << std::endl;
         SongTable songTable(songTablePos);
         std::cout << "Initialization complete!" << std::endl;
-        WindowGUI wgui(songTable, midiPortNumber);
-
-        std::chrono::nanoseconds frameTime(1000000000 / 60);
-
-        auto lastTime = std::chrono::high_resolution_clock::now();
-
-        while (wgui.Handle()) {
-            auto newTime = std::chrono::high_resolution_clock::now();
-            if (lastTime + frameTime > newTime) {
-                std::this_thread::sleep_for(frameTime - (newTime - lastTime));
-                lastTime = std::chrono::high_resolution_clock::now();
-            } else {
-                lastTime = newTime;
-            }
+        Rom& rom = Rom::Instance();
+    
+        PlayerInterface mplay(
+                rom.ReadAgbPtrToPos(songTable.GetSongTablePos()));
+        mplay.LoadSong(songTable.GetPosOfSong(810));
+        mplay.Play();
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-    } catch (const std::exception& e) {
-        endwin();
+    }
+    catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
-    if (Pa_Terminate() != paNoError)
-        std::cerr << "Error while terminating portaudio" << std::endl;
+    // if (Pa_Terminate() != paNoError)
+    //     std::cerr << "Error while terminating portaudio" << std::endl;
     Debug::close();
     return 0;
 }
@@ -88,26 +74,10 @@ static void usage()
               << std::endl;
 }
 
-static void listMidiInPorts()
-{
-    RtMidiIn midiin;
-    unsigned int nPorts = midiin.getPortCount();
-    std::cout << "\nThere are " << nPorts << " MIDI input sources available.\n";
-    std::string portName;
-    for (unsigned int i = 0; i < nPorts; i++) {
-        try {
-            portName = midiin.getPortName(i);
-        } catch (RtMidiError &error) {
-            continue;
-        }
-        std::cout << "  Input Port #" << i + 1 << ": " << portName << '\n';
-    }
-}
 
 static void help()
 {
     usage();
-    listMidiInPorts();
     std::cout << "\nControls:\n"
         "  - Arrow Keys or HJKL: Navigate through the program\n"
         "  - Tab: Change between Playlist and Songlist\n"
